@@ -226,6 +226,7 @@ module spectral_transforms
       return
       end subroutine spec_to_four 
 
+
 !>@brief The subroutine 'four_to_grid' calculate real values form fourrier coefficients
 !>@details This code is taken from the legacy spectral GFS
       subroutine four_to_grid(syn_gr_a_1,syn_gr_a_2, lon_dim_coef,nvars)
@@ -413,21 +414,13 @@ module spectral_transforms
       NF = 0
       J = 0
   101 J = J+1
-      IF ( (J-4) .LE. 0) THEN
-         GOTO 102
-      ELSE
-         GOTO 103
-      ENDIF
+      IF (J-4) 102,102,103
   102 NTRY = NTRYH(J)
       GO TO 104
   103 NTRY = NTRY+2
   104 NQ = NL/NTRY
       NR = NL-NTRY*NQ
-      IF (NR.EQ.0) THEN
-         GO TO 105
-      ELSE
-         GO TO 101
-      ENDIF
+      IF (NR) 101,105,101
   105 NF = NF+1
       RFAC(NF+2) = FLOAT(NTRY)
       NL = NQ
@@ -490,13 +483,7 @@ module spectral_transforms
          CH(1,K,1) = CC(1,1,K)+CC(IDO,2,K)
          CH(1,K,2) = CC(1,1,K)-CC(IDO,2,K)
   101 CONTINUE
-      IF ( (IDO-2) .LT. 0) THEN
-         GO TO 107
-      ELSE IF (( IDO-2).EQ. 0)THEN
-         GO TO 105
-      ELSE
-        GO TO 102
-      ENDIF
+      IF (IDO-2) 107,105,102
   102 IDP2 = IDO+2
 !OCL NOVREC
       DO 104 K=1,L1
@@ -597,13 +584,7 @@ module spectral_transforms
          CH(1,K,3) = TR2-TR3
          CH(1,K,4) = TR1+TR4
   101 CONTINUE
-      IF ( (IDO-2) .LT.0 ) THEN
-          GO TO 107
-      ELSE IF ( (IDO-2) .EQ.0 ) THEN
-          GO TO 105
-      ELSE
-          GO TO 102
-      ENDIF
+      IF (IDO-2) 107,105,102
   102 IDP2 = IDO+2
 !OCL NOVREC
       DO 104 K=1,L1
@@ -1492,6 +1473,7 @@ module spectral_transforms
 
 ! set up gfs internal state dimension and values for dynamics etc
 !-------------------------------------------------------------------
+
       gis_stochy%lon_dim_a = lon_s + 2
       jcap=ntrunc
       latg   = lat_s
@@ -1648,7 +1630,6 @@ module spectral_transforms
 !
       gl_lats_index = 0
       gis_stochy%global_lats_a = -1
-      global_time_sort_index_a=lonf
 
       do node=1,gis_stochy%nodes
           call get_lats_node_a_stochy( node-1, gis_stochy%global_lats_a,gis_stochy%lats_nodes_a(node),&
@@ -1749,8 +1730,8 @@ module spectral_transforms
       integer,intent(in)  :: me_fake
       integer,intent(in)  :: nodes
       integer,intent(in)  :: lats_nodes_a_fake
-      integer,intent(inout) :: gl_lats_index
-      integer,intent(inout) :: global_lats_a(latg)
+      integer,intent(out) :: gl_lats_index
+      integer,intent(out) :: global_lats_a(latg)
       integer, intent(in) :: global_time_sort_index(latg)
 
       integer :: ijk
@@ -1972,12 +1953,7 @@ module spectral_transforms
                                              cons2 = 2.d0, cons4 = 4.d0, &
                                              cons180 = 180.d0, &
                                              cons0p25 = 0.25d0
-#ifdef NO_QUAD_PRECISION
-      real(kind=kind_qdt_prec), parameter :: eps = 1.d-12
-#else
       real(kind=kind_qdt_prec), parameter :: eps = 1.d-20
-#endif
-
 !
 ! for better accuracy to select smaller number
 !     eps = 1.d-12
@@ -2028,6 +2004,7 @@ module spectral_transforms
       subroutine poly(n,rad,p)
 !
       implicit none
+!
       integer                  i,n
 !
 ! increase precision for more significant digit to help wgt
@@ -2049,7 +2026,8 @@ module spectral_transforms
       return
       end
 
-!>@brief The subroutine 'pln2eo_a_stochy' calculates the assoicated legendre polynomials
+
+!>@brief The subroutine 'pln2eo_a_stochy' calculates the assoicate legendre polynomials
 !>@details This code is taken from the legacy spectral GFS
       subroutine pln2eo_a_stochy(gis_stochy,num_lat)
 !

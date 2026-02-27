@@ -14,24 +14,23 @@ module stochy_data_mod
  use stochy_internal_state_mod
 ! use mersenne_twister_stochy, only : random_seed
  use mersenne_twister, only : random_seed
- use compns_stochy_mod, only : compns_stochy
+ use compns_stochy_mod, only : compns_stochy, compns_stochy_land
 
  implicit none
  private
- public :: init_stochdata,init_stochdata_ocn
+ public :: init_stochdata,init_stochdata_ocn, init_stochdata_land
 
  type(random_pattern), public, save, allocatable, dimension(:) :: &
-       rpattern_sppt,rpattern_shum,rpattern_skeb, rpattern_sfc,rpattern_epbl1,rpattern_epbl2,rpattern_ocnsppt,rpattern_spp
+       rpattern_sppt,rpattern_shum,rpattern_skeb, rpattern_sfc,rpattern_epbl1,rpattern_epbl2,rpattern_ocnsppt
  integer, public :: nepbl=0
  integer, public :: nocnsppt=0
  integer, public :: nsppt=0
  integer, public :: nshum=0
  integer, public :: nskeb=0
  integer, public :: nlndp=0 ! this is the number of different patterns (determined by the tau/lscale input) 
- integer, public :: nspp =0 ! this is the number of different patterns (determined by the tau/lscale input) 
  real*8, public,allocatable :: sl(:)
 
- real(kind=kind_dbl_prec),public, allocatable :: vfact_sppt(:),vfact_shum(:),vfact_skeb(:),vfact_spp(:)
+ real(kind=kind_dbl_prec),public, allocatable :: vfact_sppt(:),vfact_shum(:),vfact_skeb(:)
  real(kind=kind_dbl_prec),public, allocatable :: skeb_vwts(:,:)
  integer                 ,public, allocatable :: skeb_vpts(:,:)
  real(kind=kind_dbl_prec),public, allocatable :: gg_lats(:),gg_lons(:)
@@ -44,12 +43,13 @@ module stochy_data_mod
 !>@brief The subroutine 'init_stochdata' determins which stochastic physics
 !!pattern genertors are needed.
 !>@details it reads the nam_stochy namelist and allocates necessary arrays
- subroutine init_stochdata(nlevs,delt,input_nml_file,fn_nml,nlunit,iret)
+ subroutine init_stochdata(nlevs,delt,input_nml_file,stoch_ini_file,fn_nml,nlunit,iret)
 !\callgraph
 
 ! initialize random patterns.  
    use netcdf
    implicit none
+   character(len=*),  intent(in) :: stoch_ini_file !11.8.21 TZG input init pattern file
    integer, intent(in) :: nlunit,nlevs
    character(len=*),  intent(in) :: input_nml_file(:)
    character(len=64), intent(in) :: fn_nml
@@ -75,9 +75,10 @@ module stochy_data_mod
    call compns_stochy (mype,size(input_nml_file,1),input_nml_file(:),fn_nml,nlunit,delt,iret)
   
    if (iret/=0) return  ! need to make sure that non-zero irets are being trapped.
-   if ( (.NOT. do_sppt) .AND. (.NOT. do_shum) .AND. (.NOT. do_skeb)  .AND. (lndp_type==0) .AND. (.NOT. do_spp)) return
+   if ( (.NOT. do_sppt) .AND. (.NOT. do_shum) .AND. (.NOT. do_skeb)  .AND. (lndp_type==0) ) return
 
    call initialize_spectral(gis_stochy)
+   
    allocate(noise_e(len_trie_ls,2),noise_o(len_trio_ls,2))
 ! determine number of random patterns to be used for each scheme.
    do n=1,size(sppt)
@@ -114,23 +115,20 @@ module stochy_data_mod
    !  endif
    !enddo
    if (n_var_lndp>0) nlndp=1
-   if (n_var_spp>0) nspp=n_var_spp
    if (is_rootpe())  print *,' nlndp   = ', nlndp
-   if (is_rootpe())  print *,' nspp   = ', nspp
 
    if (nsppt > 0) allocate(rpattern_sppt(nsppt))
    if (nshum > 0) allocate(rpattern_shum(nshum))
    if (nskeb > 0) allocate(rpattern_skeb(nskeb))
    ! mg, sfc perts
    if (nlndp > 0) allocate(rpattern_sfc(nlndp))
-   if (nspp > 0) allocate(rpattern_spp(nspp))
 
 !  if stochini is true, then read in pattern from a file
    if (is_rootpe()) then
       if (stochini) then
          print*,'opening stoch_ini'
          !OPEN(stochlun,file='INPUT/atm_stoch.res.bin',form='unformatted',iostat=ierr,status='old')
-         ierr=nf90_open('INPUT/atm_stoch.res.nc',nf90_nowrite,ncid=stochlun)
+         ierr=nf90_open(trim(stoch_ini_file),nf90_nowrite,ncid=stochlun)
          if (ierr .NE. 0) then
             write(0,*) 'error opening stoch_ini'
             iret = ierr
@@ -376,7 +374,7 @@ module stochy_data_mod
          endif
       endif
       ones = 1.
-      call patterngenerator_init(lndp_lscale(1:nlndp),delt,lndp_tau(1:nlndp),ones(1:nlndp),iseed_lndp,rpattern_sfc, &
+      call patterngenerator_init(lndp_lscale(1:nlndp),delt,lndp_tau(1:nlndp),ones(1:nlndp),iseed_lndp, rpattern_sfc, &
                                  lonf,latg,jcap,gis_stochy%ls_node,nlndp,n_var_lndp,0,new_lscale)
       do n=1,nlndp
          if (is_rootpe()) print *, 'Initialize random pattern for LNDP PERTS'
@@ -412,63 +410,140 @@ module stochy_data_mod
          enddo ! k, n_var_lndp
       enddo ! n, nlndp
    endif ! nlndp > 0
-   if (nspp  > 0) then
+   if (is_rootpe() .and. stochini) CLOSE(stochlun)
+   deallocate(noise_e,noise_o)
+ end subroutine init_stochdata
+
+!>@brief The subroutine 'init_stochdata_land' determins which stochastic physics
+!!pattern genertors are needed (for land only)
+!>@details it reads the nam_stochy namelist and allocates necessary arrays
+ subroutine init_stochdata_land(nlevs, delt, n_var_lndp_tot, input_nml_file, stoch_ini_file, fn_nml, nlunit, iret)
+!\callgraph
+! initialize random patterns.  
+   use netcdf
+   implicit none
+   character(len=*),  intent(in) :: stoch_ini_file !11.8.21 TZG input init pattern file
+   integer, intent(in) :: nlunit,nlevs, n_var_lndp_tot
+   character(len=*),  intent(in) :: input_nml_file(:)
+   character(len=64), intent(in) :: fn_nml
+   real, intent(in) :: delt
+   integer, intent(out) :: iret
+   real :: ones(5)
+
+   real :: rnn1
+   integer :: nn,k,nm,stochlun,ierr,n
+   integer :: locl,indev,indod,indlsod,indlsev
+   integer :: l,jbasev,jbasod
+   integer :: jcapin,varid1,varid2
+   real(kind_dbl_prec),allocatable :: noise_e(:,:),noise_o(:,:)
+   include 'function_indlsod'
+   include 'function_indlsev'
+   include 'netcdf.inc'
+   stochlun=99
+   levs=nlevs
+
+   iret=0
+
+! read in namelist
+   ! call compns_stochy_land (mype, nlunit, delt, iret)
+   call compns_stochy_land (mype,size(input_nml_file,1),input_nml_file(:),fn_nml,nlunit,delt, n_var_lndp_tot, iret)
+  
+   if (iret/=0) return  ! need to make sure that non-zero irets are being trapped.
+
+   call initialize_spectral(gis_stochy)
+   
+   allocate(noise_e(len_trie_ls,2),noise_o(len_trio_ls,2))
+! determine number of random patterns to be used for each scheme.
+
+   if (n_var_lndp>0) nlndp=1
+
+   if (is_rootpe())  print *,' nlndp   = ', nlndp
+
+   allocate(rpattern_sfc(nlndp))
+
+!  if stochini is true, then read in pattern from a file
+   if (is_rootpe()) then
+      if (stochini) then
+         print*,'opening stoch_ini'
+         !OPEN(stochlun,file='INPUT/atm_stoch.res.bin',form='unformatted',iostat=ierr,status='old')
+         ierr=nf90_open(trim(stoch_ini_file),nf90_nowrite,ncid=stochlun)
+         if (ierr .NE. 0) then
+            write(0,*) 'error opening stoch_ini'
+            iret = ierr
+            return
+         end if
+         ierr=NF90_GET_ATT(stochlun,NF_GLOBAL,"ntrunc",jcapin)
+         if (ierr .NE. 0) then
+            write(0,*) 'error getting ntrunc'
+            iret = ierr
+            return
+         end if
+         print*,'ntrunc read in',jcapin
+      endif
+   endif
+   ! no spinup needed if initial patterns are defined correctly.
+
+! mg, sfc-perts
+   if (nlndp > 0) then
       if (is_rootpe()) then
-         print *, 'Initialize random pattern for SPP-PERTS'
+         print *, 'Initialize random pattern for SFC-PERTS'
          if (stochini) then
-            ierr=NF90_INQ_VARID(stochlun,"spppert_seed", varid1)
+            ierr=NF90_INQ_VARID(stochlun,"sfcpert_seed", varid1)
             if (ierr .NE. 0) then
-               write(0,*) 'error inquring SPP-PERTS seed'
+               write(0,*) 'error inquring SFC-PERTS seed'
                iret = ierr
                return
             end if
-            ierr=NF90_INQ_VARID(stochlun,"ppcpert_spec", varid2)
+            ierr=NF90_INQ_VARID(stochlun,"sfcpert_spec", varid2)
             if (ierr .NE. 0) then
-               write(0,*) 'error inquring SPP-PERTS spec'
+               write(0,*) 'error inquring SFC-PERTS spec'
                iret = ierr
                return
             end if
          endif
       endif
       ones = 1.
-      call patterngenerator_init(spp_lscale(1:nspp),delt,spp_tau(1:nspp),ones(1:nspp),iseed_spp,rpattern_spp, &
-                                 lonf,latg,jcap,gis_stochy%ls_node,nspp,n_var_spp,0,new_lscale)
-      do n=1,nspp
-         if (is_rootpe()) print *, 'Initialize random pattern for SPP PERTS'
+      call patterngenerator_init(lndp_lscale(1:nlndp),delt,lndp_tau(1:nlndp),ones(1:nlndp),iseed_lndp,rpattern_sfc, &
+                                 lonf,latg,jcap,gis_stochy%ls_node,nlndp,n_var_lndp,0,new_lscale)
+      do n=1,nlndp
+         if (is_rootpe()) print *, 'Initialize random pattern for LNDP PERTS'
+         do k=1,n_var_lndp
             if (stochini) then
-               call read_pattern(rpattern_spp(n),jcapin,stochlun,1,n,varid1,varid2,.true.,ierr)
+               call read_pattern(rpattern_sfc(n),jcapin,stochlun,k,n,varid1,varid2,.true.,ierr)
                if (ierr .NE. 0) then
-                  write(0,*) 'error reading SPP  pattern'
+                  write(0,*) 'error reading LNDP pattern'
                   iret = ierr
                   return
                endif
-               if (is_rootpe()) print *, 'spp  pattern read',n,1,minval(rpattern_spp(n)%spec_o(:,:,1)), maxval(rpattern_spp(n)%spec_o(:,:,1))
+               if (is_rootpe()) print *, 'lndp pattern read',n,k,minval(rpattern_sfc(n)%spec_o(:,:,k)), maxval(rpattern_sfc(n)%spec_o(:,:,k))
             else
-                call getnoise(rpattern_spp(n),noise_e,noise_o)
+                call getnoise(rpattern_sfc(n),noise_e,noise_o)
                 do nn=1,len_trie_ls
-                   rpattern_spp(n)%spec_e(nn,1,1)=noise_e(nn,1)
-                   rpattern_spp(n)%spec_e(nn,2,1)=noise_e(nn,2)
-                   nm = rpattern_spp(n)%idx_e(nn)
+                   rpattern_sfc(n)%spec_e(nn,1,k)=noise_e(nn,1)
+                   rpattern_sfc(n)%spec_e(nn,2,k)=noise_e(nn,2)
+                   nm = rpattern_sfc(n)%idx_e(nn)
                    if (nm .eq. 0) cycle
-                   rpattern_spp(n)%spec_e(nn,1,1) = rpattern_spp(n)%stdev*rpattern_spp(n)%spec_e(nn,1,1)*rpattern_spp(n)%varspectrum(nm)
-                   rpattern_spp(n)%spec_e(nn,2,1) = rpattern_spp(n)%stdev*rpattern_spp(n)%spec_e(nn,2,1)*rpattern_spp(n)%varspectrum(nm)
+                   rpattern_sfc(n)%spec_e(nn,1,k) = rpattern_sfc(n)%stdev*rpattern_sfc(n)%spec_e(nn,1,k)*rpattern_sfc(n)%varspectrum(nm)
+                   rpattern_sfc(n)%spec_e(nn,2,k) = rpattern_sfc(n)%stdev*rpattern_sfc(n)%spec_e(nn,2,k)*rpattern_sfc(n)%varspectrum(nm)
                 enddo
                 do nn=1,len_trio_ls
-                   rpattern_spp(n)%spec_o(nn,1,1)=noise_o(nn,1)
-                   rpattern_spp(n)%spec_o(nn,2,1)=noise_o(nn,2)
-                   nm = rpattern_spp(n)%idx_o(nn)
+                   rpattern_sfc(n)%spec_o(nn,1,k)=noise_o(nn,1)
+                   rpattern_sfc(n)%spec_o(nn,2,k)=noise_o(nn,2)
+                   nm = rpattern_sfc(n)%idx_o(nn)
                    if (nm .eq. 0) cycle
-                   rpattern_spp(n)%spec_o(nn,1,1) = rpattern_spp(n)%stdev*rpattern_spp(n)%spec_o(nn,1,1)*rpattern_spp(n)%varspectrum(nm)
-                   rpattern_spp(n)%spec_o(nn,2,1) = rpattern_spp(n)%stdev*rpattern_spp(n)%spec_o(nn,2,1)*rpattern_spp(n)%varspectrum(nm)
+                   rpattern_sfc(n)%spec_o(nn,1,k) = rpattern_sfc(n)%stdev*rpattern_sfc(n)%spec_o(nn,1,k)*rpattern_sfc(n)%varspectrum(nm)
+                   rpattern_sfc(n)%spec_o(nn,2,k) = rpattern_sfc(n)%stdev*rpattern_sfc(n)%spec_o(nn,2,k)*rpattern_sfc(n)%varspectrum(nm)
                 enddo
-                if (is_rootpe()) print *, 'spp pattern initialized, ',n, 1, minval(rpattern_spp(n)%spec_o(:,:,1)), maxval(rpattern_spp(n)%spec_o(:,:,1))
+                if (is_rootpe()) print *, 'lndp pattern initialized, ',n, k, minval(rpattern_sfc(n)%spec_o(:,:,k)), maxval(rpattern_sfc(n)%spec_o(:,:,k))
             endif ! stochini
-      enddo ! n, nspp
-   endif ! nspp  > 0
+         enddo ! k, n_var_lndp
+      enddo ! n, nlndp
+   endif ! nlndp > 0
 
    if (is_rootpe() .and. stochini) CLOSE(stochlun)
    deallocate(noise_e,noise_o)
- end subroutine init_stochdata
+
+ end subroutine init_stochdata_land
 
  subroutine init_stochdata_ocn(nlevs,delt,iret)
 

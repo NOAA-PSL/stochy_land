@@ -16,7 +16,7 @@ module kinddef
       integer, parameter :: kind_dbl_prec = 8
       integer, parameter :: kind_io8      = 8
 
-#ifdef NO_QUAD_PRECISION
+#ifdef __PGI
       integer, parameter :: kind_qdt_prec = 8
 #else
       integer, parameter :: kind_qdt_prec = 16
