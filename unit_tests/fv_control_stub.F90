@@ -378,6 +378,8 @@ module fv_control_stub_mod
           ntiles=1
          ! non_ortho = .false.
          ! nf_omega = 0
+       else
+          ntiles=6
        endif
        !5.9.24 test regional
       !if (regional) bounded_domain = .true.
